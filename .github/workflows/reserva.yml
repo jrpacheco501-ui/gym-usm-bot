@@ -1,0 +1,39 @@
+name: Reserva Gimnasio USM (Jueves y Viernes)
+
+on:
+  schedule:
+    # 06:25 AM hora de Chile sólo los días Jueves (4) y Viernes (5)
+    # En horario de invierno (UTC-4): 06:25 CLT = 10:25 UTC
+    # En horario de verano (UTC-3):  06:25 CLT = 09:25 UTC
+    - cron: '25 10 * * 4,5'
+  workflow_dispatch:  # Permite disparar una prueba manual desde la pestaña Actions
+
+jobs:
+  tomar-cupo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias y Playwright
+        run: |
+          pip install playwright pytz
+          playwright install chromium --with-deps
+
+      - name: Ejecutar reserva automatizada
+        env:
+          GYM_EMAIL: ${{ secrets.GYM_EMAIL }}
+          GYM_PASSWORD: ${{ secrets.GYM_PASSWORD }}
+        run: python reserva.py
+
+      - name: Subir captura de pantalla / comprobante
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comprobante-pantalla
+          path: "*.png"
