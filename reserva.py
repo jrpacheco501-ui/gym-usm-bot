@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -19,75 +20,91 @@ def esperar_a_las_630():
             print(f"¡Son las {ahora.strftime('%H:%M:%S.%f')}! Tomando cupo...")
             break
         elif ahora.hour > 6:
-            print(f"Hora actual ({ahora.strftime('%H:%M:%S')}) ya superó las 06:30 AM.")
+            print(f"Hora actual ({ahora.strftime('%H:%M:%S')}) fuera del umbral de espera matutino.")
             break
-        time.sleep(0.15)  # Chequeo continuo cada 150 ms
+        time.sleep(0.15)
 
 def main():
     if not PASSWORD:
-        print("Error: La variable GYM_PASSWORD no está configurada.")
+        print("Error: La variable GYM_PASSWORD no está configurada en los Secrets.")
         sys.exit(1)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
         page = context.new_page()
 
-        print("1. Accediendo a reservasgimnasiosantiago.cl...")
-        page.goto("https://reservasgimnasiosantiago.cl/", wait_until="networkidle")
-
-        print("2. Iniciando sesión...")
-        page.fill("input[type='email']", EMAIL)
-        page.fill("input[type='password']", PASSWORD)
-        page.click("button:has-text('Iniciar sesión')")
-
-        # 3. Cerrar popup inicial de advertencia
         try:
-            print("Esperando modal de advertencia...")
-            btn_entendido = page.wait_for_selector(
-                "button:has-text('ENTENDIDO'), button:has-text('Entendido')",
-                timeout=8000
-            )
-            if btn_entendido:
-                btn_entendido.click()
-                print("Modal cerrado.")
-        except Exception:
-            print("No se detectó el modal o ya estaba cerrado.")
+            print("1. Accediendo a reservasgimnasiosantiago.cl...")
+            page.goto("https://reservasgimnasiosantiago.cl/", wait_until="networkidle", timeout=30000)
 
-        # 4. Seleccionar campus San Joaquín
-        print("Seleccionando sede San Joaquín...")
-        page.wait_for_selector("text=San Joaquín", timeout=8000)
-        page.click("text=San Joaquín")
-        time.sleep(1)
+            print("2. Completando credenciales...")
+            page.fill("input[type='email']", EMAIL)
+            page.fill("input[type='password']", PASSWORD)
+            
+            # Para asegurar el envío del formulario:
+            # Opción 1: Presionar Enter en el input de password
+            page.press("input[type='password']", "Enter")
+            
+            # Opción 2: Buscar el botón de submit o el último botón con texto 'Iniciar sesión'
+            time.sleep(1)
+            btn_submit = page.locator("button[type='submit'], form button").filter(has_text=re.compile(r"iniciar", re.I))
+            if btn_submit.count() > 0:
+                btn_submit.last.click(force=True)
 
-        # 5. Espera activa hasta exactamente las 6:30:00 AM
-        esperar_a_las_630()
+            print("Esperando respuesta tras inicio de sesión...")
+            time.sleep(3)
 
-        # 6. Actualizar el estado de los bloques
-        try:
-            page.click("text=San Joaquín")
-        except Exception:
-            pass
+            # 3. Cerrar popup de advertencia
+            try:
+                print("Verificando popup de advertencia...")
+                modal_btn = page.locator("button, [role='button'], .swal2-confirm, div").filter(has_text=re.compile(r"entendido", re.I))
+                if modal_btn.first.is_visible(timeout=5000):
+                    modal_btn.first.click(force=True)
+                    print("Popup cerrado exitosamente.")
+                    time.sleep(1)
+            except Exception:
+                print("No se detectó popup activo.")
 
-        # 7. Clic inmediato sobre el Bloque 1-2 (8:15)
-        print(f"Haciendo clic inmediato en el bloque {TARGET_BLOCK}...")
-        try:
-            selector = f"button:has-text('{TARGET_BLOCK}'), [role='button']:has-text('{TARGET_BLOCK}'), div:has-text('{TARGET_BLOCK}')"
-            btn_bloque = page.wait_for_selector(selector, timeout=4000)
-            if btn_bloque:
-                btn_bloque.click(force=True)
-                print("¡Cupo reservado exitosamente!")
+            # 4. Seleccionar sede San Joaquín (con o sin tilde)
+            print("Seleccionando sede San Joaquín...")
+            sede_locator = page.locator("button, a, div, span").filter(has_text=re.compile(r"san joaqu[ií]n", re.I))
+            sede_locator.first.wait_for(state="visible", timeout=12000)
+            sede_locator.first.click(force=True)
+            print("Sede San Joaquín seleccionada.")
+            time.sleep(1)
+
+            # 5. Espera activa hasta las 06:30:00 AM
+            esperar_a_las_630()
+
+            # 6. Forzar actualización de la sede para habilitar botones
+            try:
+                sede_locator.first.click(force=True)
+                time.sleep(0.2)
+            except Exception:
+                pass
+
+            # 7. Clic sobre el bloque objetivo 8:15
+            print(f"Buscando bloque horario {TARGET_BLOCK}...")
+            bloque = page.locator("button, [role='button'], div, span").filter(has_text=re.compile(TARGET_BLOCK))
+            bloque.first.wait_for(state="visible", timeout=5000)
+            bloque.first.click(force=True)
+            print("¡Clic en el bloque realizado!")
 
             time.sleep(2)
             page.screenshot(path="comprobante_reserva.png")
-            print("Comprobante guardado en comprobante_reserva.png.")
-        except Exception as e:
-            print(f"Error al presionar el bloque: {e}")
-            page.screenshot(path="error_reserva.png")
+            print("Captura final guardada en comprobante_reserva.png")
 
-        browser.close()
+        except Exception as e:
+            print(f"\n[ALERTA] Ocurrió un error en el flujo: {e}")
+            page.screenshot(path="error_pantalla.png")
+            print("Captura del estado actual guardada en error_pantalla.png")
+            raise e
+
+        finally:
+            browser.close()
 
 if __name__ == "__main__":
     main()
