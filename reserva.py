@@ -26,7 +26,7 @@ def esperar_a_las_630():
 
 def main():
     if not PASSWORD:
-        print("Error: La variable GYM_PASSWORD no está configurada en los Secrets.")
+        print("Error: La variable GYM_PASSWORD no está configurada en los Secrets de GitHub.")
         sys.exit(1)
 
     with sync_playwright() as p:
@@ -40,7 +40,7 @@ def main():
             print("1. Accediendo a reservasgimnasiosantiago.cl e iniciando sesión...")
             page.goto("https://reservasgimnasiosantiago.cl/", wait_until="networkidle", timeout=30000)
 
-            # Iniciar sesión una sola vez
+            # Iniciar sesión previa
             page.fill("input[type='email']", EMAIL)
             page.fill("input[type='password']", PASSWORD)
             page.press("input[type='password']", "Enter")
@@ -50,7 +50,7 @@ def main():
             if btn_submit.count() > 0:
                 btn_submit.last.click(force=True)
 
-            # Cerrar el popup ENTENDIDO único del login
+            # Cerrar el modal ENTENDIDO único del login
             print("Cerrando modal inicial...")
             btn_entendido = page.locator("button").filter(has_text=re.compile(r"^ENTENDIDO$", re.I))
             if btn_entendido.count() == 0:
@@ -59,12 +59,12 @@ def main():
             btn_entendido.first.wait_for(state="visible", timeout=12000)
             btn_entendido.first.click()
             btn_entendido.first.wait_for(state="hidden", timeout=5000)
-            print("Sesión lista y modal cerrado.")
+            print("Sesión iniciada y modal cerrado con éxito.")
 
             # 2. Espera de alta precisión hasta las 06:30:00 AM
             esperar_a_las_630()
 
-            # 3. Recarga ultra rápida a las 06:30:00 (mantiene la sesión, sin popups)
+            # 3. Recarga ultra rápida a las 06:30:00 AM (mantiene la sesión, sin popups)
             print("Recargando página a toda velocidad...")
             page.reload(wait_until="domcontentloaded")
 
@@ -86,31 +86,32 @@ def main():
             while time.time() - t_inicio < 15:
                 texto_card = card_bloque.inner_text().lower()
 
-                # PROTECCIÓN 1: Si ya dice "cancelar", el cupo está tomado. Detenerse inmediatamente.
+                # PROTECCIÓN 1: Si ya dice 'cancelar', el cupo está reservado. Detener de inmediato.
                 if "cancelar" in texto_card:
-                    print("¡Éxito! El cupo ya está tomado ('Cancelar Reserva' detectado). No se volverá a presionar.")
+                    print("¡Éxito! El cupo ya está tomado ('Cancelar Reserva' detectado).")
                     reserva_confirmada = True
                     break
 
+                # Localizar el botón de la esquina derecha del bloque
                 btn_accion = card_bloque.locator("button, [role='button']")
                 if btn_accion.count() > 0:
                     texto_btn = btn_accion.first.inner_text().lower()
 
                     if "cancelar" in texto_btn:
-                        print("¡Éxito! Botón en estado 'Cancelar Reserva'. Proceso finalizado.")
+                        print("¡Éxito! Botón en estado 'Cancelar Reserva'.")
                         reserva_confirmada = True
                         break
 
-                    # Si el servidor aún tarda una fracción de segundo en abrir
-                    if "cerrado" in texto_btn:
-                        time.sleep(0.15)
+                    # Si el botón aún dice 'Abre 6:30 AM' o 'cerrado', esperar décimas de segundo
+                    if "abre" in texto_btn or "cerrado" in texto_btn:
+                        time.sleep(0.1)
                         continue
 
-                    # PROTECCIÓN 2: Si está abierto (no dice 'cerrado' y no dice 'cancelar'), reservar
-                    print(f"¡Cupo abierto! (Texto: '{texto_btn}'). Enviando clic único de reserva...")
+                    # PROTECCIÓN 2: Si el botón cambió de estado (ej: 'Reservar'), enviar un solo clic
+                    print(f"¡Cupo habilitado detectado! (Texto: '{texto_btn}'). Enviando clic de reserva...")
                     btn_accion.first.click(force=True)
 
-                    # Espera pasiva de confirmación (sin volver a cliquear)
+                    # Espera pasiva de confirmación (sin volver a cliquear para evitar cancelación accidental)
                     print("Esperando confirmación del servidor...")
                     for _ in range(20):  # Monitorear cada 150 ms durante 3 segundos
                         time.sleep(0.15)
@@ -125,7 +126,7 @@ def main():
                 time.sleep(0.1)
 
             if not reserva_confirmada:
-                print("Ciclo finalizado. Revisa la captura para confirmar el estado.")
+                print("Ciclo finalizado. Revisa la captura de comprobante para verificar el estado.")
 
             time.sleep(1)
             page.screenshot(path="comprobante_reserva.png")
